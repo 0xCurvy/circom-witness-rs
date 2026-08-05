@@ -128,7 +128,9 @@ impl Operation {
                 let b: BigUint = b.into();
                 Fr::from(a % b)
             }
-            _ => unimplemented!("operator {:?} not implemented for Montgomery", self),
+            // Evaluate non-field operations in Circom's canonical integer
+            // representation, then return to the scalar field.
+            _ => Fr::new(self.eval(a.into(), b.into()).into()),
         }
     }
 }
@@ -411,16 +413,11 @@ pub fn constants(nodes: &mut [Node]) {
 pub fn montgomery_form(nodes: &mut [Node]) {
     for node in nodes.iter_mut() {
         use Node::*;
-        use Operation::*;
         match node {
             Constant(c) => *node = MontConstant(Fr::new((*c).into())),
             MontConstant(..) => (),
             Input(..) => (),
-            Op(Add | Sub | Mul | Neg | Div | Mod | IDiv, ..) => (),
-            Op(op, ..) => {
-                println!("Operator {:?} not implemented for Montgomery form", op);
-                unimplemented!("Operators Montgomery form")
-            }
+            Op(..) => (),
             BBF(..) => (),
         }
     }
