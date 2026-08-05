@@ -238,6 +238,16 @@ pub unsafe fn Fr_band(to: *mut FrElement, a: *const FrElement, b: *const FrEleme
 }
 
 #[allow(warnings)]
+pub unsafe fn Fr_bor(to: *mut FrElement, a: *const FrElement, b: *const FrElement) {
+    binop(Operation::Bor, to, a, b);
+}
+
+#[allow(warnings)]
+pub unsafe fn Fr_bxor(to: *mut FrElement, a: *const FrElement, b: *const FrElement) {
+    binop(Operation::Bxor, to, a, b);
+}
+
+#[allow(warnings)]
 pub unsafe fn Fr_neg(to: *mut FrElement, a: *const FrElement) {
     binop(Operation::Neg, to, a, a);
 }
