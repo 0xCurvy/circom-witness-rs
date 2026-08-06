@@ -1,7 +1,7 @@
 [package]
 name = "curvy-signet-builder"
 description = "Curvy's fork of circom-witness-rs (by @philsippl). Builds postcard witness graphs for SIGNET artifacts. Not affiliated with or endorsed by the original project."
-version = "0.1.0"
+version = "0.1.0-rc.1"
 edition = "2021"
 license = "MIT"
 keywords = ["cryptography", "circom", "zero-knowledge", "witness", "zk-snarks"]

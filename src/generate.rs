@@ -1,4 +1,9 @@
 #![allow(non_snake_case)]
+// These loops walk a byte stream: each iteration consumes the next record from
+// `bytes` and writes it at the matching index. The index is the correspondence
+// between stream position and slot, so an iterator chain would hide the very
+// invariant that makes them readable.
+#![allow(clippy::needless_range_loop)]
 
 use crate::field::{self, *};
 use crate::HashSignalInfo;
@@ -99,7 +104,7 @@ mod ffi {
 
     // C++ types and signatures exposed to Rust.
     unsafe extern "C++" {
-        include!("circom-witness-rs/include/witness.h");
+        include!("curvy-signet-builder/include/witness.h");
 
         unsafe fn run(ctx: *mut Circom_CalcWit);
         fn get_size_of_io_map() -> u32;
@@ -153,15 +158,15 @@ pub fn get_constants() -> Vec<FrElement> {
         + (ffi::get_size_of_witness() as usize) * 8..];
     let mut constants = vec![field::constant(U256::from(0)); ffi::get_size_of_constants() as usize];
     for i in 0..ffi::get_size_of_constants() as usize {
-        let sv = bytes.read_i32::<LittleEndian>().unwrap() as i32;
-        let typ = bytes.read_u32::<LittleEndian>().unwrap() as u32;
+        let sv = bytes.read_i32::<LittleEndian>().unwrap();
+        let typ = bytes.read_u32::<LittleEndian>().unwrap();
 
         let mut buf = [0; 32];
         bytes.read_exact(&mut buf).unwrap();
 
         if typ & 0x80000000 == 0 {
             let c = if sv < 0 {
-                M - U256::from(sv.abs() as u32)
+                M - U256::from(sv.unsigned_abs())
             } else {
                 U256::from(sv as u32)
             };
@@ -172,7 +177,7 @@ pub fn get_constants() -> Vec<FrElement> {
         }
     }
 
-    return constants;
+    constants
 }
 
 pub fn get_iosignals() -> Vec<InputOutputList> {
@@ -185,7 +190,6 @@ pub fn get_iosignals() -> Vec<InputOutputList> {
         + (ffi::get_size_of_witness() as usize) * 8
         + (ffi::get_size_of_constants() as usize * 40)..];
     let io_size = ffi::get_size_of_io_map() as usize;
-    let hashmap_size = ffi::get_size_of_input_hashmap() as usize;
     let mut indices = vec![0usize; io_size];
 
     (0..io_size).for_each(|i| {

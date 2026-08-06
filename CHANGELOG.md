@@ -4,6 +4,23 @@ Versioning restarts at `0.1.0` for this fork. Upstream's history through `v0.2.3
 is in that project's changelog:
 <https://github.com/philsippl/circom-witness-rs/blob/master/CHANGELOG.md>.
 
+## 0.1.0-rc.1
+
+### Fixed
+
+- The cxx include paths still named the pre-fork package, so `0.1.0` could not be
+  built with the `build-witness` feature at all. cxx resolves `include!` against
+  the *package* name and symlinks `curvy-signet-builder` into
+  `$OUT_DIR/cxxbridge/crate/`, so `circom-witness-rs/include/witness.h` pointed at
+  nothing and every consumer enabling the feature failed in the C++ step with
+  `fatal error: 'circom-witness-rs/include/witness.h' file not found`. Fixed in
+  `src/generate.rs` and in the header `script/replace.sh` writes into the
+  generated `src/circuit.cc`.
+
+  Build-path only: a graph generated after this change is byte-identical to one
+  generated before it, so nothing needs regenerating. `0.1.0` is yanked, since it
+  cannot produce a graph at all.
+
 ## 0.1.0
 
 Forked from upstream `v0.2.3` (`38553d2`) and published under a new name.

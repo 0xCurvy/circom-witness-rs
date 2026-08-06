@@ -1,0 +1,129 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+# One in-flight run per ref. Superseded PR pushes are cancelled; master is left
+# alone so every commit keeps a complete result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+  # Matches the toolchain the artifact pipeline is built against.
+  CIRCOM_VERSION: v2.2.3
+
+jobs:
+  library:
+    name: Lint and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rustfmt, clippy
+          # The action otherwise exports RUSTFLAGS=-D warnings, which applies to
+          # every dependency too -- a new release of any crate in the tree that
+          # emits a deprecation would then fail CI for reasons we cannot fix.
+          # Denying via clippy's own argument scopes it to this crate.
+          rustflags: ""
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+
+  build-witness:
+    # The gate that matters. `build-witness` is the crate's whole purpose, and
+    # nothing else in this repository compiles it: the feature is off by default,
+    # its build script shells out to `circom` and a C++ toolchain, and the cxx
+    # bridge is only generated when it is on. Version 0.1.0 shipped to crates.io
+    # unable to compile this path at all -- the cxx include paths still named the
+    # pre-fork package -- and no check here would have caught it, because every
+    # check there was ran with the feature off.
+    name: build-witness (circom + C++ bridge)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: clippy
+          # See the note in `library`: scope lint denial to this crate.
+          rustflags: ""
+
+      - name: Install circom
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -sSfL -o "$HOME/.local/bin/circom" \
+            "https://github.com/iden3/circom/releases/download/${CIRCOM_VERSION}/circom-linux-amd64"
+          chmod +x "$HOME/.local/bin/circom"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Verify circom
+        run: circom --version
+
+      - name: Write a throwaway circuit
+        # Deliberately minimal. This job is testing the toolchain wiring -- circom
+        # invocation, replace.sh, the cxx bridge, the C++ compile and the link --
+        # not any particular circuit. A production circuit would write hundreds of
+        # MB of objects and take minutes to prove the same three things.
+        run: |
+          mkdir -p "$RUNNER_TEMP/circuit"
+          cat > "$RUNNER_TEMP/circuit/multiplier.circom" <<'CIRCOM'
+          pragma circom 2.0.0;
+
+          template Multiplier() {
+              signal input a;
+              signal input b;
+              signal output c;
+              c <== a * b;
+          }
+
+          component main = Multiplier();
+          CIRCOM
+
+      - name: Build with build-witness
+        env:
+          WITNESS_CPP: ${{ runner.temp }}/circuit/multiplier.circom
+        run: cargo build --release --features build-witness --bin build_graph
+
+      - name: Clippy with build-witness
+        # `generate.rs` and `field.rs` are both behind `#[cfg(feature =
+        # "build-witness")]`, so the `library` job's clippy never sees them --
+        # this is the only job that can lint them, and it already has circom.
+        env:
+          WITNESS_CPP: ${{ runner.temp }}/circuit/multiplier.circom
+        run: cargo clippy --all-targets --features build-witness -- -D warnings
+
+      - name: Generate a graph
+        # Building proves the bridge compiles and links; running proves the
+        # generated C++ is actually callable and produces a graph.
+        env:
+          WITNESS_CPP: ${{ runner.temp }}/circuit/multiplier.circom
+        run: |
+          cd "$RUNNER_TEMP"
+          "$GITHUB_WORKSPACE/target/release/build_graph"
+          test -s graph.bin || { echo "no graph.bin produced" >&2; exit 1; }
+          echo "graph.bin: $(wc -c < graph.bin | tr -d ' ') bytes"
+
+      - name: Assert no stale package-name includes
+        # The exact defect that shipped in 0.1.0. cxx resolves include paths
+        # against the package name, so any surviving reference to the pre-fork
+        # name is a build failure waiting for the next consumer.
+        #
+        # Runs after the build on purpose: by now `src/circuit.cc` exists, so this
+        # checks the header replace.sh actually emitted, not just the script that
+        # emits it. Scoped to the source directories -- `target/` holds generated
+        # copies that would only add noise.
+        run: |
+          if grep -rn "circom-witness-rs/include\|circom-witness-rs/src" src script include; then
+            echo "stale pre-fork include path -- cxx resolves these against the package name" >&2
+            exit 1
+          fi
