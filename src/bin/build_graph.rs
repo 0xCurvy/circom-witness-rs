@@ -1,3 +1,3 @@
 fn main() -> eyre::Result<()> {
-    circom_witness_rs::generate::build_witness()
+    curvy_signet_builder::generate::build_witness()
 }

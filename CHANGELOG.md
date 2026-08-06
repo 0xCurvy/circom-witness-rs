@@ -1,14 +1,47 @@
 # Changelog
 
-## [0.2.3](https://github.com/philsippl/circom-witness-rs/compare/v0.2.2...v0.2.3) - 2026-02-10
+Versioning restarts at `0.1.0` for this fork. Upstream's history through `v0.2.3`
+is in that project's changelog:
+<https://github.com/philsippl/circom-witness-rs/blob/master/CHANGELOG.md>.
 
-### Other
+## 0.1.0
 
-- GH actions CI & release workflow ([#32](https://github.com/philsippl/circom-witness-rs/pull/32))
+Forked from upstream `v0.2.3` (`38553d2`) and published under a new name.
 
-## [0.2.2] - 2025-11-20
+### Breaking, relative to upstream
 
-## What's Changed
+- `Operation` gains `Bor` and `Bxor` between `Band` and `Neg`. postcard encodes a
+  variant by its declaration index, so every index from 14 up shifts. A `graph.bin`
+  written by upstream decodes incorrectly against this crate and vice versa, and it
+  does so silently, because both remain valid indices. Consumers must track which
+  build produced a file. `curvy-signet` models this as `--ops original|patched`.
+- The library is `curvy_signet_builder`, not `circom_witness_rs`.
 
-- fix: fixes links to old witness name by @0xThemis in https://github.com/philsippl/circom-witness-rs/pull/28
-- feat: derive clone for graph by @0xThemis in https://github.com/philsippl/circom-witness-rs/pull/29
+### Added
+
+- `build_graph` binary, so an artifact pipeline can invoke the generator directly
+  rather than through a library call:
+  `WITNESS_CPP=<circuit.circom> cargo run --release --features build-witness --bin build_graph`.
+- `Fr_bor` and `Fr_bxor`. The cxx bridge declared both but left them commented out,
+  so generated C++ failed to link for any circuit using `|` or `^` with
+  "use of undeclared identifier 'Fr_bxor'".
+- wasm32 target support, via `getrandom`'s `js` backend.
+
+### Changed
+
+- Non-field operations evaluate in Circom's canonical integer representation
+  instead of panicking. Montgomery evaluation previously refused everything outside
+  the field arithmetic set, and `montgomery_form` refused to walk a graph containing
+  one, which ruled out any circuit using comparisons, shifts or bitwise operators.
+  Field operations are untouched and keep their fast path.
+- `build_graph` is gated behind `required-features = ["build-witness"]`. Without it,
+  a plain `cargo check` failed at the binary on an unresolved module.
+
+### Removed
+
+- The inherited GitHub workflows and `release-plz.toml`. The release job triggered
+  on push to `master` with `contents` and `id-token` write permissions, which in a
+  fork means every push attempts somebody else's release process. Its config had
+  `git_release_enable` and `changelog_update` set, so leaving it behind would let a
+  reinstated workflow, or a manual `release-plz` run, cut releases and rewrite this
+  file.
