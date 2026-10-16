@@ -45,7 +45,7 @@ jobs:
     # The GPL builder in ir-builder/ is a separate package with its own lockfile.
     # `cargo test` compares its graphs with the witnesses circom computed for the
     # fixtures, and the script recomputes those witnesses with circom here.
-    name: ir-builder (circom IR, no C++)
+    name: ir-builder
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:

@@ -1,6 +1,6 @@
 [package]
 name = "curvy-signet-ir-builder"
-description = "Builds curvy-signet-builder witness graphs by executing circom's intermediate representation, without generating or compiling C++."
+description = "Builds curvy-signet-builder witness graphs from circom circuits by executing circom's intermediate representation."
 version = "0.1.2"
 edition = "2021"
 # Links circom's compiler crates, which are GPL-3.0.

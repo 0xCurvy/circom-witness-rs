@@ -2,7 +2,7 @@
 
 Builds witness graphs, in the encoding of the `curvy-signet-builder` crate in the parent directory,
 from circom circuits. It compiles a circuit with circom 2.2.3 in-process and executes circom's
-intermediate representation. No C++ toolchain is needed.
+intermediate representation.
 
 GPL-3.0-only (see `LICENSE`). Not published; the crate in the parent directory does not depend on it.
 

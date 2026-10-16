@@ -1,8 +1,8 @@
 # curvy-signet-builder
 
 Curvy's fork of [philsippl/circom-witness-rs](https://github.com/philsippl/circom-witness-rs), based on
-upstream `v0.2.3` (`38553d2`). Upstream's documentation, which describes its C++ mode, is in
-[README.upstream.md](README.upstream.md).
+upstream `v0.2.3` (`38553d2`). [README.upstream.md](README.upstream.md) is upstream's documentation and
+describes upstream, not this fork.
 
 This repository holds two packages:
 
