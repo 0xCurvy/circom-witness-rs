@@ -1,0 +1,39 @@
+[package]
+name = "curvy-signet-ir-builder"
+description = "Builds curvy-signet-builder witness graphs by executing circom's intermediate representation, without generating or compiling C++."
+version = "0.1.2"
+edition = "2021"
+# Links circom's compiler crates, which are GPL-3.0.
+license = "GPL-3.0-only"
+publish = false
+repository = "https://github.com/0xCurvy/circom-witness-rs"
+
+# A workspace of its own: the MIT crate in the parent directory neither builds
+# nor packages anything from here.
+[workspace]
+
+[dependencies]
+curvy-signet-builder = { path = ".." }
+eyre = "0.6"
+postcard = { version = "1", features = ["use-std"], default-features = false }
+ruint = "1.17"
+smallvec = "1"
+# The allocator of the binary only (see src/main.rs).
+mimalloc = { version = "0.1", default-features = false }
+
+# circom 2.2.3, the compiler that produces Curvy's R1CS files. Witness layout
+# and simplification must match it exactly.
+circom-code-producers = { package = "code_producers", git = "https://github.com/iden3/circom.git", tag = "v2.2.3" }
+circom-compiler = { package = "compiler", git = "https://github.com/iden3/circom.git", tag = "v2.2.3" }
+circom-constraint-generation = { package = "constraint_generation", git = "https://github.com/iden3/circom.git", tag = "v2.2.3" }
+circom-parser = { package = "parser", git = "https://github.com/iden3/circom.git", tag = "v2.2.3" }
+circom-program-structure = { package = "program_structure", git = "https://github.com/iden3/circom.git", tag = "v2.2.3" }
+circom-type-analysis = { package = "type_analysis", git = "https://github.com/iden3/circom.git", tag = "v2.2.3" }
+
+[[bin]]
+name = "curvy-signet-ir-builder"
+path = "src/main.rs"
+
+[dev-dependencies]
+rand = "0.8"
+serde_json = "1"

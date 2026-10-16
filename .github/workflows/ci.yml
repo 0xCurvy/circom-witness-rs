@@ -17,8 +17,10 @@ permissions:
 env:
   CARGO_INCREMENTAL: "0"
   CARGO_TERM_COLOR: always
-  # Matches the toolchain the artifact pipeline is built against.
+  # The circom release the builder compiles with, as a reference to check against.
   CIRCOM_VERSION: v2.2.3
+  # The digest GitHub lists for that release's circom-linux-amd64.
+  CIRCOM_SHA256: 85342c7ff332d948df7c0c50ecf201e6129349aef550ce873f3c811b79fe53a3
 
 jobs:
   library:
@@ -39,91 +41,47 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
 
-  build-witness:
-    # The gate that matters. `build-witness` is the crate's whole purpose, and
-    # nothing else in this repository compiles it: the feature is off by default,
-    # its build script shells out to `circom` and a C++ toolchain, and the cxx
-    # bridge is only generated when it is on. Version 0.1.0 shipped to crates.io
-    # unable to compile this path at all -- the cxx include paths still named the
-    # pre-fork package -- and no check here would have caught it, because every
-    # check there was ran with the feature off.
-    name: build-witness (circom + C++ bridge)
+  ir-builder:
+    # The GPL builder in ir-builder/ is a separate package with its own lockfile.
+    # `cargo test` compares its graphs with the witnesses circom computed for the
+    # fixtures, and the script recomputes those witnesses with circom here.
+    name: ir-builder (circom IR, no C++)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: ir-builder
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          components: clippy
+          components: rustfmt, clippy
           # See the note in `library`: scope lint denial to this crate.
           rustflags: ""
+          # The package has its own workspace and target directory.
+          cache-workspaces: ir-builder
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
-      - name: Install circom
+      - name: Install circom and circomlib
         run: |
           mkdir -p "$HOME/.local/bin"
           curl -sSfL -o "$HOME/.local/bin/circom" \
             "https://github.com/iden3/circom/releases/download/${CIRCOM_VERSION}/circom-linux-amd64"
+          echo "$CIRCOM_SHA256  $HOME/.local/bin/circom" | sha256sum -c -
           chmod +x "$HOME/.local/bin/circom"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          npm install --silent --prefix "$RUNNER_TEMP/circomlib" circomlib@2.0.5
 
-      - name: Verify circom
-        run: circom --version
-
-      - name: Write a throwaway circuit
-        # Deliberately minimal. This job is testing the toolchain wiring -- circom
-        # invocation, replace.sh, the cxx bridge, the C++ compile and the link --
-        # not any particular circuit. A production circuit would write hundreds of
-        # MB of objects and take minutes to prove the same three things.
-        run: |
-          mkdir -p "$RUNNER_TEMP/circuit"
-          cat > "$RUNNER_TEMP/circuit/multiplier.circom" <<'CIRCOM'
-          pragma circom 2.0.0;
-
-          template Multiplier() {
-              signal input a;
-              signal input b;
-              signal output c;
-              c <== a * b;
-          }
-
-          component main = Multiplier();
-          CIRCOM
-
-      - name: Build with build-witness
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
         env:
-          WITNESS_CPP: ${{ runner.temp }}/circuit/multiplier.circom
-        run: cargo build --release --features build-witness --bin build_graph
+          CIRCOMLIB_INCLUDE: ${{ runner.temp }}/circomlib/node_modules
 
-      - name: Clippy with build-witness
-        # `generate.rs` and `field.rs` are both behind `#[cfg(feature =
-        # "build-witness")]`, so the `library` job's clippy never sees them --
-        # this is the only job that can lint them, and it already has circom.
-        env:
-          WITNESS_CPP: ${{ runner.temp }}/circuit/multiplier.circom
-        run: cargo clippy --all-targets --features build-witness -- -D warnings
+      - name: Check every fixture against circom
+        run: scripts/check-against-circom.sh --all --circomlib "$RUNNER_TEMP/circomlib/node_modules"
 
-      - name: Generate a graph
-        # Building proves the bridge compiles and links; running proves the
-        # generated C++ is actually callable and produces a graph.
-        env:
-          WITNESS_CPP: ${{ runner.temp }}/circuit/multiplier.circom
-        run: |
-          cd "$RUNNER_TEMP"
-          "$GITHUB_WORKSPACE/target/release/build_graph"
-          test -s graph.bin || { echo "no graph.bin produced" >&2; exit 1; }
-          echo "graph.bin: $(wc -c < graph.bin | tr -d ' ') bytes"
-
-      - name: Assert no stale package-name includes
-        # The exact defect that shipped in 0.1.0. cxx resolves include paths
-        # against the package name, so any surviving reference to the pre-fork
-        # name is a build failure waiting for the next consumer.
-        #
-        # Runs after the build on purpose: by now `src/circuit.cc` exists, so this
-        # checks the header replace.sh actually emitted, not just the script that
-        # emits it. Scoped to the source directories -- `target/` holds generated
-        # copies that would only add noise.
-        run: |
-          if grep -rn "circom-witness-rs/include\|circom-witness-rs/src" src script include; then
-            echo "stale pre-fork include path -- cxx resolves these against the package name" >&2
-            exit 1
-          fi
+      - name: The repository's build-graph.sh runs the builder
+        run: ../build-graph.sh --version

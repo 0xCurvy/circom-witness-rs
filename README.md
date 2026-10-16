@@ -1,23 +1,38 @@
 # curvy-signet-builder
 
-Curvy's fork of [philsippl/circom-witness-rs](https://github.com/philsippl/circom-witness-rs). Based on upstream
-`v0.2.3` (`38553d2`); versioning restarts at `0.1.0`. Upstream's documentation is preserved in
-[README.upstream.md](README.upstream.md) and still describes the library.
+Curvy's fork of [philsippl/circom-witness-rs](https://github.com/philsippl/circom-witness-rs), based on
+upstream `v0.2.3` (`38553d2`). Upstream's documentation, which describes its C++ mode, is in
+[README.upstream.md](README.upstream.md).
 
-## The one thing to know before consuming graphs from this fork
+This repository holds two packages:
 
-Adding `Bor` and `Bxor` inserts two variants into `Operation` between `Band` and
-`Neg`. postcard encodes a variant by its **declaration index**, so every index from
-14 up shifts relative to upstream.
-
-A `graph.bin` built before that change decodes incorrectly against this enum, and
-one built after decodes incorrectly against upstream's - silently, because both
-remain valid indices. Whatever consumes these files has to know which revision
-produced them.
+- `curvy-signet-builder` (MIT): the postcard witness-graph format of SIGNET artifacts, its optimizer and
+  its evaluator.
+- [`curvy-signet-ir-builder`](ir-builder/README.md) in `ir-builder/` (GPL-3.0, not published): builds
+  graphs from circom circuits. `curvy-signet-builder` does not depend on it.
 
 ## Building a graph
 
 ```bash
-WITNESS_CPP=/abs/path/to/circuit.circom \
-  cargo run --release --features build-witness --bin build_graph
+./build-graph.sh path/to/circuit.circom -o graph.bin --expect-r1cs path/to/proving_key.r1cs
 ```
+
+Needs cargo; the first run compiles the builder. `./build-graph.sh --help` lists the options. To install
+the builder on `PATH`:
+
+```bash
+cargo install --locked --path ir-builder
+```
+
+## Computing a witness
+
+```rust
+let graph = curvy_signet_builder::init_graph(&std::fs::read("graph.bin")?)?;
+// Main inputs by name, values flattened: HashMap<String, Vec<U256>>.
+let witness = curvy_signet_builder::calculate_witness(inputs, &graph)?;
+```
+
+## Graph encoding
+
+`Operation` has `Bor` and `Bxor` between `Band` and `Neg`, so every operation index from 14 up differs
+from upstream's. Graphs from upstream and from this fork do not decode with each other's types.

@@ -1,0 +1,40 @@
+{
+  "witness": [
+    { "circuit": "levels.circom", "input": "levels.json" },
+    { "circuit": "mixed_grid.circom", "input": "mixed_grid.json" },
+    { "circuit": "ops.circom", "input": "ops-a-greater.json" },
+    { "circuit": "ops.circom", "input": "ops-a-less.json" },
+    { "circuit": "ops.circom", "input": "ops-nested-else.json" },
+    { "circuit": "ops.circom", "input": "ops-negative.json" },
+    { "circuit": "ops.circom", "input": "ops-zero.json" },
+    { "circuit": "edge.circom", "input": "edge.json" },
+    { "circuit": "edge.circom", "input": "edge-zeros.json" },
+    { "circuit": "semantics.circom", "input": "semantics-zero.json" },
+    { "circuit": "semantics.circom", "input": "semantics-y-zero.json" },
+    { "circuit": "semantics.circom", "input": "semantics-small.json" },
+    { "circuit": "semantics.circom", "input": "semantics-253.json" },
+    { "circuit": "semantics.circom", "input": "semantics-254.json" },
+    { "circuit": "semantics.circom", "input": "semantics-255.json" },
+    { "circuit": "semantics.circom", "input": "semantics-256.json" },
+    { "circuit": "semantics.circom", "input": "semantics-300.json" },
+    { "circuit": "semantics.circom", "input": "semantics-half.json" },
+    { "circuit": "semantics.circom", "input": "semantics-minus-1.json" },
+    { "circuit": "semantics.circom", "input": "semantics-minus-253.json" },
+    { "circuit": "semantics.circom", "input": "semantics-minus-254.json" },
+    { "circuit": "eager_inputs.circom", "input": "eager-inputs-less.json" },
+    { "circuit": "eager_inputs.circom", "input": "eager-inputs-greater.json" },
+    { "circuit": "eager_inputs.circom", "input": "eager-inputs-small-y.json" },
+    { "circuit": "eager_out_of_range.circom", "input": "eager-out-of-range-low.json" },
+    { "circuit": "circomlib_mix.circom", "input": "circomlib-equal.json", "needs": "circomlib" },
+    { "circuit": "circomlib_mix.circom", "input": "circomlib-differ.json", "needs": "circomlib" }
+  ],
+  "fails": [
+    { "circuit": "eager_out_of_range.circom", "input": "eager-out-of-range-high.json" }
+  ],
+  "rejected": [
+    { "circuit": "function_branch.circom", "reason": "a branch in function pick_0 depends on an input" },
+    { "circuit": "input_index.circom", "reason": "an array index depends on an input" },
+    { "circuit": "input_loop.circom", "reason": "a loop condition depends on an input" },
+    { "circuit": "extern_c_main.circom", "reason": "extern_c template Foo_0 has no circom body" }
+  ]
+}

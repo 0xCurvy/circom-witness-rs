@@ -1,45 +1,26 @@
 [package]
 name = "curvy-signet-builder"
-description = "Curvy's fork of circom-witness-rs (by @philsippl). Builds postcard witness graphs for SIGNET artifacts. Not affiliated with or endorsed by the original project."
-version = "0.1.0-rc.1"
+description = "Curvy's fork of circom-witness-rs (by @philsippl): the postcard witness-graph format behind SIGNET artifacts, its optimizer and its evaluator. Not affiliated with or endorsed by the original project."
+version = "0.1.2"
 edition = "2021"
 license = "MIT"
 keywords = ["cryptography", "circom", "zero-knowledge", "witness", "zk-snarks"]
-categories = ["cryptography", "development-tools::build-utils"]
+categories = ["cryptography"]
 readme = "README.md"
 repository = "https://github.com/0xCurvy/circom-witness-rs"
+# The GPL graph builder in ir-builder/ is a separate, unpublished package.
+exclude = ["ir-builder/"]
 
 [dependencies]
 ark-bn254 = { version = "0.5", features = ["std"] }
 ark-ff = { version = "0.5", features = ["std"] }
 ark-serialize = { version = "0.5", features = ["derive"] }
-byteorder = "1"
-cxx = { version = "1", optional = true }
 eyre = "0.6"
-hex = "0.4"
+num-bigint = "0.4"
 postcard = { version = "1", features = ["use-std"], default-features = false }
 rand = "0.8"
 ruint = { version = "1.17", features = ["rand", "serde", "ark-ff-05", "num-bigint"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-num-bigint = "0.4"
-num-traits = "0.2"
-
-[build-dependencies]
-cxx-build = "1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
-
-[[bin]]
-name = "build_graph"
-required-features = ["build-witness"]
-
-[profile.release]
-opt-level = 3
-lto = "fat"
-codegen-units = 1
-debug = true
-
-[features]
-build-witness = ["dep:cxx"]

@@ -1,10 +1,10 @@
 use std::{cmp::Ordering, collections::HashMap, ops::Shr};
 
-use crate::{BlackBoxFunction, M};
+use crate::M;
 use ark_bn254::Fr;
+use ark_ff::Zero;
 use eyre::bail;
 use num_bigint::BigUint;
-use rand::Rng;
 use ruint::aliases::U256;
 use ruint::uint;
 use serde::{Deserialize, Serialize};
@@ -30,6 +30,9 @@ where
     a.map_err(serde::de::Error::custom)
 }
 
+/// A graph operation. postcard encodes a variant by its declaration index, so this
+/// order is the graph encoding: variants stay, in place, even where nothing here
+/// produces them any more (`MMul`, `Inv`).
 #[derive(Hash, PartialEq, Eq, Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum Operation {
     Mul,
@@ -57,6 +60,7 @@ pub enum Operation {
     IDiv,
 }
 
+/// A graph node. Like [`Operation`], its declaration order is the encoding.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Node {
     Input(usize),
@@ -64,7 +68,6 @@ pub enum Node {
     #[serde(serialize_with = "ark_se", deserialize_with = "ark_de")]
     MontConstant(Fr),
     Op(Operation, usize, usize),
-    BBF(String, Vec<usize>),
 }
 
 fn cmp_balanced(a: U256, b: U256) -> Ordering {
@@ -110,6 +113,32 @@ impl Operation {
             Pow => a.pow_mod(b, M),
             IDiv => a / b,
             _ => unimplemented!("operator {:?} not implemented", self),
+        }
+    }
+
+    /// `eval`, or `None` where evaluation fails: a zero divisor, the inverse of zero,
+    /// or a shift amount outside `0..256`.
+    pub fn checked_eval(&self, a: U256, b: U256) -> Option<U256> {
+        use Operation::*;
+        let zero_operand = match self {
+            Div | IDiv | Mod => b % M == U256::ZERO,
+            Inv => a % M == U256::ZERO,
+            _ => false,
+        };
+        let shift_out_of_range = matches!(self, Shl | Shr) && b % M >= uint!(256);
+        (!zero_operand && !shift_out_of_range).then(|| self.eval(a, b))
+    }
+
+    /// Why `eval_fr` cannot evaluate this operation on `a` and `b`, if it cannot.
+    fn failure(&self, a: Fr, b: Fr) -> Option<&'static str> {
+        use Operation::*;
+        match self {
+            Div | IDiv | Mod if b.is_zero() => Some("division or modulus by zero"),
+            Inv if a.is_zero() => Some("inverse of zero"),
+            Shl | Shr if Into::<U256>::into(b) >= uint!(256_U256) => {
+                Some("shift amount outside 0..256")
+            }
+            _ => None,
         }
     }
 
@@ -171,50 +200,30 @@ pub fn optimize(nodes: &mut Vec<Node>, outputs: &mut [usize]) {
     montgomery_form(nodes);
 }
 
-fn strip_suffix_number(s: String) -> String {
-    if let Some(pos) = s.rfind('_') {
-        let (prefix, suffix) = s.split_at(pos);
-        if suffix[1..].chars().all(|c| c.is_ascii_digit()) {
-            return prefix.to_string();
-        }
-    }
-    s
-}
-
-pub fn evaluate(
-    nodes: &[Node],
-    inputs: &[U256],
-    outputs: &[usize],
-    bbfs: Option<&HashMap<String, BlackBoxFunction>>,
-) -> eyre::Result<Vec<U256>> {
+pub fn evaluate(nodes: &[Node], inputs: &[U256], outputs: &[usize]) -> eyre::Result<Vec<U256>> {
     assert_valid(nodes);
 
     // Evaluate the graph.
     let mut values = Vec::with_capacity(nodes.len());
-    for node in nodes.iter() {
+    for (i, node) in nodes.iter().enumerate() {
         let value = match node {
             Node::Constant(c) => Fr::new(c.into()),
             Node::MontConstant(c) => *c,
-            Node::Input(i) => {
-                if *i < inputs.len() {
-                    Fr::new(inputs[*i].into())
-                } else {
-                    Fr::new(U256::MAX.into())
+            Node::Input(i) => match inputs.get(*i) {
+                Some(input) => Fr::new(input.into()),
+                None => {
+                    return Err(eyre::eyre!(
+                        "input signal {i} is outside the {}-entry input buffer",
+                        inputs.len()
+                    ))
                 }
-            }
-            Node::Op(op, a, b) => op.eval_fr(values[*a], values[*b]),
-            Node::BBF(name, params) => {
-                if let Some(bbfs) = bbfs {
-                    let params = params.iter().map(|i| values[*i]).collect::<Vec<_>>();
-                    let name = strip_suffix_number(name.clone());
-                    if let Some(bbf) = bbfs.get(&name) {
-                        bbf(&params)
-                    } else {
-                        bail!("black box function {:?} not found", name);
-                    }
-                } else {
-                    bail!("no black box functions provided");
+            },
+            Node::Op(op, a, b) => {
+                let (a, b) = (values[*a], values[*b]);
+                if let Some(reason) = op.failure(a, b) {
+                    bail!("{reason} at graph node {i}");
                 }
+                op.eval_fr(a, b)
             }
         };
         values.push(value);
@@ -236,8 +245,12 @@ pub fn propagate(nodes: &mut [Node]) {
     for i in 0..nodes.len() {
         if let Node::Op(op, a, b) = nodes[i] {
             if let (Node::Constant(va), Node::Constant(vb)) = (nodes[a].clone(), nodes[b].clone()) {
-                nodes[i] = Node::Constant(op.eval(va, vb));
-                constants += 1;
+                // An operation that cannot be evaluated stays in the graph, so witness
+                // generation fails on it as the circuit would.
+                if let Some(value) = op.checked_eval(va, vb) {
+                    nodes[i] = Node::Constant(value);
+                    constants += 1;
+                }
             } else if a == b {
                 // Not constant but equal
                 use Operation::*;
@@ -273,11 +286,6 @@ pub fn tree_shake(nodes: &mut Vec<Node>, outputs: &mut [usize]) {
                 used[a] = true;
                 used[b] = true;
             }
-            if let Node::BBF(_, params) = &nodes[i] {
-                for &param in params.iter() {
-                    used[param] = true;
-                }
-            }
         }
     }
 
@@ -307,11 +315,6 @@ pub fn tree_shake(nodes: &mut Vec<Node>, outputs: &mut [usize]) {
             *a = renumber[*a].unwrap();
             *b = renumber[*b].unwrap();
         }
-        if let Node::BBF(_, params) = node {
-            for param in params.iter_mut() {
-                *param = renumber[*param].unwrap();
-            }
-        }
     }
     for output in outputs.iter_mut() {
         *output = renumber[*output].unwrap();
@@ -320,32 +323,62 @@ pub fn tree_shake(nodes: &mut Vec<Node>, outputs: &mut [usize]) {
     eprintln!("Removed {removed} unused nodes");
 }
 
+/// Multiplicative hasher for the tables keyed by field elements and node indices.
+#[derive(Default, Clone, Copy)]
+struct LimbHasher(u64);
+
+impl std::hash::Hasher for LimbHasher {
+    fn finish(&self) -> u64 {
+        self.0.rotate_left(26)
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for chunk in bytes.chunks(8) {
+            let mut word = [0u8; 8];
+            word[..chunk.len()].copy_from_slice(chunk);
+            self.write_u64(u64::from_le_bytes(word));
+        }
+    }
+    fn write_u64(&mut self, word: u64) {
+        self.0 = (self.0.rotate_left(5) ^ word).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+    fn write_u8(&mut self, byte: u8) {
+        self.write_u64(byte as u64);
+    }
+    fn write_usize(&mut self, word: usize) {
+        self.write_u64(word as u64);
+    }
+}
+
+type FastMap<K, V> = HashMap<K, V, std::hash::BuildHasherDefault<LimbHasher>>;
+
 /// Randomly evaluate the graph
-fn random_eval(nodes: &mut [Node]) -> Vec<U256> {
+fn random_eval(nodes: &[Node]) -> Vec<Fr> {
+    use ark_ff::UniformRand;
     let mut rng = rand::thread_rng();
-    let mut values = Vec::with_capacity(nodes.len());
-    let mut inputs = HashMap::new();
-    let mut prfs = HashMap::new();
+    let mut values: Vec<Fr> = Vec::with_capacity(nodes.len());
+    let mut inputs: FastMap<usize, Fr> = FastMap::default();
+    let mut prfs: FastMap<(Operation, Fr, Fr), Fr> = FastMap::default();
     for node in nodes.iter() {
         use Operation::*;
         let value = match node {
-            Node::BBF(_, _) => rng.gen::<U256>() % M,
             // Constants evaluate to themselves
-            Node::Constant(c) => *c,
+            Node::Constant(c) => Fr::new((*c).into()),
 
             Node::MontConstant(_) => unimplemented!("should not be used"),
 
             // Algebraic Ops are evaluated directly
             // Since the field is large, by Swartz-Zippel if
             // two values are the same then they are likely algebraically equal.
-            Node::Op(op @ (Add | Sub | Mul | Neg), a, b) => op.eval(values[*a], values[*b]),
+            Node::Op(Add, a, b) => values[*a] + values[*b],
+            Node::Op(Sub, a, b) => values[*a] - values[*b],
+            Node::Op(Mul, a, b) => values[*a] * values[*b],
+            Node::Op(Neg, a, _) => -values[*a],
 
             // Input and non-algebraic ops are random functions
-            // TODO: https://github.com/recmo/uint/issues/95 and use .gen_range(..M)
-            Node::Input(i) => *inputs.entry(*i).or_insert_with(|| rng.gen::<U256>() % M),
+            Node::Input(i) => *inputs.entry(*i).or_insert_with(|| Fr::rand(&mut rng)),
             Node::Op(op, a, b) => *prfs
                 .entry((*op, values[*a], values[*b]))
-                .or_insert_with(|| rng.gen::<U256>() % M),
+                .or_insert_with(|| Fr::rand(&mut rng)),
         };
         values.push(value);
     }
@@ -359,29 +392,20 @@ pub fn value_numbering(nodes: &mut [Node], outputs: &mut [usize]) {
     // Evaluate the graph in random field elements.
     let values = random_eval(nodes);
 
-    // Find all nodes with the same value.
-    let mut value_map = HashMap::new();
-    for (i, &value) in values.iter().enumerate() {
-        value_map.entry(value).or_insert_with(Vec::new).push(i);
-    }
-
     // For nodes that are the same, pick the first index.
-    let mut renumber = Vec::with_capacity(nodes.len());
-    for value in values {
-        renumber.push(value_map[&value][0]);
-    }
+    let mut first: FastMap<Fr, usize> = FastMap::default();
+    first.reserve(values.len());
+    let renumber: Vec<usize> = values
+        .iter()
+        .enumerate()
+        .map(|(i, value)| *first.entry(*value).or_insert(i))
+        .collect();
 
     // Renumber references.
     for node in nodes.iter_mut() {
         if let Node::Op(_, a, b) = node {
             *a = renumber[*a];
             *b = renumber[*b];
-        }
-
-        if let Node::BBF(_, params) = node {
-            for p in params.iter_mut() {
-                *p = renumber[*p];
-            }
         }
     }
     for output in outputs.iter_mut() {
@@ -393,6 +417,7 @@ pub fn value_numbering(nodes: &mut [Node], outputs: &mut [usize]) {
 
 /// Probabilistic constant determination
 pub fn constants(nodes: &mut [Node]) {
+    use ark_ff::PrimeField;
     assert_valid(nodes);
 
     // Evaluate the graph in random field elements.
@@ -406,7 +431,7 @@ pub fn constants(nodes: &mut [Node]) {
             continue;
         }
         if values_a[i] == values_b[i] {
-            nodes[i] = Node::Constant(values_a[i]);
+            nodes[i] = Node::Constant(U256::from_limbs(values_a[i].into_bigint().0));
             constants += 1;
         }
     }
@@ -422,7 +447,6 @@ pub fn montgomery_form(nodes: &mut [Node]) {
             MontConstant(..) => (),
             Input(..) => (),
             Op(..) => (),
-            BBF(..) => (),
         }
     }
     eprintln!("Converted to Montgomery form");
